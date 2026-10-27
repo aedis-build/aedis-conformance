@@ -50,7 +50,7 @@ Pin the action by the commit SHA of a release tag with the tag in the comment, a
 
 | Input | Default | Meaning |
 |---|---|---|
-| `level` | `3` | Conformance level to check: 1, 2 or 3 |
+| `level` | `3` | Conformance level to check: 1, 2 or 3; empty only validates the manifests |
 | `path` | `.` | Root of the repository to validate; its `conformance/levels.yaml`, when present, raises the thresholds (never lowers them) |
 | `chart` | `""` | Chart for the GitOps manifests: a directory or `oci://...`; empty uses `charts/aedis-app` of the platform checkout |
 | `chart-version` | `""` | Chart version when `chart` is an OCI reference |

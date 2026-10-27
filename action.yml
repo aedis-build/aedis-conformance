@@ -19,7 +19,7 @@ branding:
 
 inputs:
   level:
-    description: Conformance level to check (1, 2 or 3)
+    description: Conformance level to check (1, 2 or 3); empty only validates the manifests
     default: "3"
   path:
     description: Root of the repository to validate; its conformance/levels.yaml, when present, raises the thresholds
@@ -96,7 +96,8 @@ runs:
       run: |
         set -euo pipefail
         chart="$CHART"; [ -n "$chart" ] || chart="$PWD/.aedis-platform/charts/aedis-app"
-        args=(platform validate --repo "$REPO" --level "$LEVEL" --out "$OUT" --chart "$chart" --kubernetes-version "$K8S_VERSION")
+        args=(platform validate --repo "$REPO" --out "$OUT" --chart "$chart" --kubernetes-version "$K8S_VERSION")
+        [ -z "$LEVEL" ] || args+=(--level "$LEVEL")
         [ -z "$CHART_VERSION" ] || args+=(--chart-version "$CHART_VERSION")
         if dotnet run --project .aedis-platform/cli/Aedis.Cli -c Release -- "${args[@]}"; then
           echo "result=pass" >> "$GITHUB_OUTPUT"
