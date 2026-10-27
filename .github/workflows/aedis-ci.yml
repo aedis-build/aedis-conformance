@@ -1,0 +1,97 @@
+# Quality pipeline of this action: Conventional Commits, SAST (Semgrep with the Aedis rules) and REUSE through the
+# Aedis Platform reusables, and the action itself run against this repository at level 3. The gate (gate.yml)
+# listens for the end of this workflow on pull requests.
+name: aedis-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+# One run per pull request: a new push or closing the PR cancels the run in progress.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  commits:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    uses: aedis-build/aedis-platform/.github/workflows/conventional-commits.yml@0372306df888c2e382079df0482e2f63d5aba7db # v1.0.3
+    permissions:
+      contents: read
+
+  sast:
+    if: github.event.action != 'closed'
+    uses: aedis-build/aedis-platform/.github/workflows/sast.yml@0372306df888c2e382079df0482e2f63d5aba7db # v1.0.3
+    permissions:
+      contents: read
+      security-events: write
+
+  conformance:
+    if: github.event.action != 'closed'
+    name: Conformance of this repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: pipx run reuse==5.0.2 lint
+      # This repository has no apps/: the action answers for the repository controls (PLT-22, platform pins on a
+      # release tag) and marks the GitOps controls as not applicable.
+      - uses: ./
+        id: conformance
+        with:
+          level: 3
+      - name: The summary says what the gate saw
+        env:
+          RESULT: ${{ steps.conformance.outputs.result }}
+        run: |
+          set -euo pipefail
+          test "$RESULT" = pass
+          python3 -c "import json; s=json.load(open('aedis-conformance/validate-summary.json')); assert s['schema']=='aedis.platform/validate-summary/v1' and s['result']=='pass', s"
+
+  # The organization audit needs the Aedis Compliance App (organization secrets, selected repositories): until they
+  # reach this repository the job only says so. Level 1 and continue-on-error: this run proves the audit path works,
+  # the level itself is the maintainer's to reach.
+  audit:
+    if: github.event.action != 'closed'
+    name: Organization audit (with the App)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: The App's credentials reach this repository
+        id: guard
+        env:
+          APP_ID: ${{ secrets.AEDIS_APP_ID }}
+        run: |
+          if [ -z "$APP_ID" ]; then
+            echo "::warning::AEDIS_APP_ID is empty (organization secret, selected repositories): the audit waits for it"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.guard.outputs.enabled == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        if: steps.guard.outputs.enabled == 'true'
+        id: app
+        with:
+          app-id: ${{ secrets.AEDIS_APP_ID }}
+          private-key: ${{ secrets.AEDIS_APP_PRIVATE_KEY }}
+      - uses: ./
+        if: steps.guard.outputs.enabled == 'true'
+        continue-on-error: true
+        with:
+          level: 1
+          token: ${{ steps.app.outputs.token }}
+          out: audit
+      - name: The audit report was written
+        if: steps.guard.outputs.enabled == 'true'
+        run: test -s audit/org-audit-summary.json && test -s audit/org-audit.html
