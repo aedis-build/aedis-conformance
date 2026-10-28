@@ -9,9 +9,7 @@
 # shortcut: builds the CLI from source (checkout of aedis-build/aedis-platform at a pinned release and `dotnet run`),
 # switch to `dotnet tool install aedis-cli` once Aedis.Cli is on nuget.org.
 name: Aedis Conformance
-description: >-
-  Checks a repository against the Aedis Platform conformance levels (L1-L3): validates the GitOps manifests and the
-  platform controls with aedis platform validate and, with a token, audits the repository in its organization.
+description: Checks a repository against the Aedis Platform conformance levels (L1-L3) and, with a token, audits its organization.
 author: Aedis
 branding:
   icon: check-circle
