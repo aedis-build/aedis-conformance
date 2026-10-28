@@ -1,0 +1,128 @@
+# Conformance of a repository against the Aedis Platform levels (L1 Baseline, L2 Hardened, L3 Regulated), run in
+# the caller's job: `aedis platform validate --level N` renders and validates a GitOps repository (apps/**) and
+# checks the controls the CLI can verify locally (the PLT-xx controls of conformance/levels.yaml: pod baseline,
+# secrets via ESO, probes, PDB, digest in prod, egress policy, WAF, prod by PR, platform pins on a release tag). A
+# repository without apps/ (a library, an action) answers only for the repository controls. With a token,
+# `aedis org audit` then audits the repository in its organization (OpenSSF Best Practices criteria by tier, live
+# branch protection, Scorecard minimums, release evidence) and fails when the level is not reached.
+#
+# shortcut: builds the CLI from source (checkout of aedis-build/aedis-platform at a pinned release and `dotnet run`),
+# switch to `dotnet tool install aedis-cli` once Aedis.Cli is on nuget.org.
+name: Aedis Conformance
+description: >-
+  Checks a repository against the Aedis Platform conformance levels (L1-L3): validates the GitOps manifests and the
+  platform controls with aedis platform validate and, with a token, audits the repository in its organization.
+author: Aedis
+branding:
+  icon: check-circle
+  color: purple
+
+inputs:
+  level:
+    description: Conformance level to check (1, 2 or 3); empty only validates the manifests
+    default: "3"
+  path:
+    description: Root of the repository to validate; its conformance/levels.yaml, when present, raises the thresholds
+    default: .
+  chart:
+    description: "Chart for the GitOps manifests: a directory or oci://...; empty uses charts/aedis-app of the platform checkout"
+    default: ""
+  chart-version:
+    description: Chart version when chart is an OCI reference
+    default: ""
+  kubernetes-version:
+    description: Kubernetes version kubeconform validates against
+    default: "1.31.0"
+  out:
+    description: Directory for the rendered manifests, validate-summary.json and the audit report (uploaded as an artifact)
+    default: aedis-conformance
+  token:
+    description: >-
+      GitHub token for `aedis org audit` of this repository in its organization (reads repository settings, rulesets,
+      releases and the latest run summaries; the Aedis Compliance App token is the usual one). Empty skips the audit.
+    default: ""
+  platform-ref:
+    description: Commit of aedis-build/aedis-platform the CLI is built from (the SHA of a release tag)
+    # v1.2.0: the first platform release that validates a repository without apps/.
+    default: c096e93f15a76e52fa793868fc82b74587cb9ca0 # v1.2.0
+
+outputs:
+  result:
+    description: pass or fail of the validation (the level is reached when no control fails)
+    value: ${{ steps.validate.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      with:
+        dotnet-version: 10.0.x
+    - name: Aedis Platform CLI source and chart
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: aedis-build/aedis-platform
+        ref: ${{ inputs.platform-ref }}
+        path: .aedis-platform
+        persist-credentials: false
+    - name: helm and kubeconform (GitOps repositories only)
+      shell: bash
+      env:
+        REPO: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        # The platform checkout is a nested repository: excluded, so no later commit in this job picks it up as a gitlink.
+        [ -d .git ] && echo .aedis-platform >> .git/info/exclude
+        [ -d "$REPO/apps" ] || { echo "no apps/ in $REPO: repository controls only, helm not needed"; exit 0; }
+        HELM_VERSION=v3.18.4
+        curl -sSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
+          | sudo tar -xz -C /usr/local/bin --strip-components=1 linux-amd64/helm
+        KUBECONFORM_VERSION=v0.6.7
+        curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+          | sudo tar -xz -C /usr/local/bin kubeconform
+        helm version --short && kubeconform -v
+    - name: aedis platform validate
+      id: validate
+      shell: bash
+      env:
+        DOTNET_NOLOGO: "1"
+        DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        LEVEL: ${{ inputs.level }}
+        REPO: ${{ inputs.path }}
+        CHART: ${{ inputs.chart }}
+        CHART_VERSION: ${{ inputs.chart-version }}
+        K8S_VERSION: ${{ inputs.kubernetes-version }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        chart="$CHART"; [ -n "$chart" ] || chart="$PWD/.aedis-platform/charts/aedis-app"
+        args=(platform validate --repo "$REPO" --out "$OUT" --chart "$chart" --kubernetes-version "$K8S_VERSION")
+        [ -z "$LEVEL" ] || args+=(--level "$LEVEL")
+        [ -z "$CHART_VERSION" ] || args+=(--chart-version "$CHART_VERSION")
+        if dotnet run --project .aedis-platform/cli/Aedis.Cli -c Release -- "${args[@]}"; then
+          echo "result=pass" >> "$GITHUB_OUTPUT"
+        else
+          echo "result=fail" >> "$GITHUB_OUTPUT"; exit 1
+        fi
+    - name: aedis org audit (with a token)
+      if: inputs.token != ''
+      shell: bash
+      env:
+        DOTNET_NOLOGO: "1"
+        DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+        LEVEL: ${{ inputs.level }}
+        OUT: ${{ inputs.out }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        dotnet run --project .aedis-platform/cli/Aedis.Cli -c Release -- org audit \
+          --org "$GITHUB_REPOSITORY_OWNER" --repo "${GITHUB_REPOSITORY#*/}" --level "$LEVEL" --token "$TOKEN" --out "$OUT"
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: always()
+      with:
+        name: conformance-summary
+        path: |
+          ${{ inputs.out }}/validate-summary.json
+          ${{ inputs.out }}/org-audit-summary.json
+          ${{ inputs.out }}/org-audit.md
+          ${{ inputs.out }}/org-audit.html
+        if-no-files-found: ignore
