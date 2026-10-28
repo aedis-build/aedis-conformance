@@ -43,9 +43,8 @@ inputs:
     default: ""
   platform-ref:
     description: Commit of aedis-build/aedis-platform the CLI is built from (the SHA of a release tag)
-    # aedis-platform#98 (fe726a0): the first platform release that validates a repository without apps/. Repin to the
-    # SHA of the release tag that ships it (# vX.Y.Z).
-    default: fe726a0b5ad23f765bbfb4623fa21ac30a30ecff
+    # v1.2.0: the first platform release that validates a repository without apps/.
+    default: c096e93f15a76e52fa793868fc82b74587cb9ca0 # v1.2.0
 
 outputs:
   result:
