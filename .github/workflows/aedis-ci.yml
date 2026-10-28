@@ -96,7 +96,3 @@ jobs:
         if: steps.guard.outputs.enabled == 'true'
         run: test -s audit/org-audit-summary.json && test -s audit/org-audit.html
 
-  # Temporary probe (removed before merge): which github context names the reusable's own commit.
-  probe:
-    if: github.event.action != 'closed'
-    uses: aedis-build/aedis-platform/.github/workflows/probe-context.yml@6bbf070ed5487d3f976b8caf31c61a3c2ea223a3
